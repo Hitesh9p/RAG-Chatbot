@@ -29,8 +29,8 @@ This project is an interactive, memory-enabled RAG (Retrieval-Augmented Generati
 
 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/rag-chatbot-groq
-cd rag-chatbot-groq
+git clone https://github.com/hitesh9p/rag-chatbot
+cd rag-chatbot
 
 2. Install Dependencies
 pip install streamlit langchain langchain-community langchain-core langchain-text-splitters langchain-groq python-dotenv chromadb
