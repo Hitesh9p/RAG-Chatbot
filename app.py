@@ -1,67 +1,52 @@
 import streamlit as st
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import FAISS
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_groq import ChatGroq
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.schema import HumanMessage, SystemMessage
-import os
+import json
+import traceback
 
-# ---------------------------
-# Load API key from secrets
-# ---------------------------
-groq_api_key = st.secrets["GROQ_API_KEY"]
+# ---------------- CONFIG ----------------
+MODEL_NAME = "llama3-70b-8192"
 
-# ---------------------------
-# Streamlit UI
-# ---------------------------
-st.title("📄 RAG Chatbot with Groq")
-st.caption("Upload a PDF and ask questions. Powered by FAISS + Groq LLM.")
+# ---------------- API KEY HANDLING ----------------
+try:
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+except KeyError:
+    st.error("❌ Missing `GROQ_API_KEY` in Streamlit secrets.")
+    st.stop()
 
-uploaded_file = st.file_uploader("📤 Upload a PDF", type=["pdf"])
-user_question = st.text_input("💬 Ask a question about the PDF:")
+# ---------------- LLM INITIALIZATION ----------------
+llm = ChatGroq(
+    groq_api_key=GROQ_API_KEY,
+    model=MODEL_NAME,
+    temperature=0
+)
 
-# ---------------------------
-# Process PDF and Build Vectorstore
-# ---------------------------
-if uploaded_file:
-    # Save file temporarily
-    with open("temp.pdf", "wb") as f:
-        f.write(uploaded_file.read())
+# ---------------- STREAMLIT UI ----------------
+st.title("📚 RAG Chatbot (Groq API)")
+user_query = st.text_input("💬 Ask me something:")
 
-    loader = PyPDFLoader("temp.pdf")
-    docs = loader.load()
-
-    # Split into chunks
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    split_docs = splitter.split_documents(docs)
-
-    # Create embeddings
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
-    # Build FAISS vector store
-    vectorstore = FAISS.from_documents(split_docs, embedding=embeddings)
-
-    # ---------------------------
-    # Chat with Groq
-    # ---------------------------
-    if user_question:
-        retriever = vectorstore.as_retriever()
-        retrieved_docs = retriever.get_relevant_documents(user_question)
-
-        # Create context from retrieved docs
-        context = "\n\n".join([d.page_content for d in retrieved_docs])
-
-        llm = ChatGroq(groq_api_key=groq_api_key, model="mixtral-8x7b-32768")
-
-        # Proper message format for ChatGroq
+if user_query:
+    try:
+        # Prepare messages in correct LangChain format
         messages = [
-            SystemMessage(content="You are a helpful assistant. Answer based only on the provided context."),
-            HumanMessage(content=f"Context:\n{context}\n\nQuestion:\n{user_question}")
+            SystemMessage(content="You are a helpful assistant that answers based on context."),
+            HumanMessage(content=user_query)
         ]
 
+        # Debug logging — see exactly what is sent to Groq
+        st.subheader("🛠 Debug Log (what is being sent)")
+        st.code(json.dumps([{"role": "system", "content": messages[0].content},
+                            {"role": "user", "content": messages[1].content}],
+                           indent=2), language="json")
+
+        # Call Groq model
         response = llm.invoke(messages)
 
-        # Display answer
-        st.subheader("📝 Answer:")
+        # Display the response
+        st.subheader("✅ Answer")
         st.write(response.content)
+
+    except Exception as e:
+        st.subheader("❌ Error Details")
+        st.error(str(e))
+        st.text(traceback.format_exc())
