@@ -1,88 +1,94 @@
-import os
-import tempfile
-import streamlit as st
+# app.py
 
+import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-
+from langchain.chains import ConversationalRetrievalChain
 from langchain_groq import ChatGroq
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.output_parsers import StrOutputParser
 
-# Load API key from Streamlit secrets
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+# ---- Page config ----
+st.set_page_config(page_title="PDF RAG Chatbot", layout="wide")
+st.title("📄 PDF Chatbot with FAISS + HuggingFace + Groq")
 
-st.set_page_config(page_title="📄 RAG Chatbot", layout="wide")
-st.title("📄 RAG Chatbot")
-
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-if not uploaded_file:
-    st.info("📤 Please upload a PDF to begin.")
-    st.stop()
-
-# Save uploaded file temporarily
-with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-    tmp_file.write(uploaded_file.read())
-    pdf_path = tmp_file.name
-
-# Load and split the PDF
-loader = PyPDFLoader(pdf_path)
-docs = loader.load()
-splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-split_docs = splitter.split_documents(docs)
-
-# Use Hugging Face embeddings (no server needed)
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-# Use FAISS vector store (works on Streamlit Cloud)
-vectorstore = FAISS.from_documents(split_docs, embedding=embeddings)
-retriever = vectorstore.as_retriever()
-
-# Chat history
+# ---- Initialize session state ----
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Prompt template
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful assistant. Use the retrieved context to answer."),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{question}"),
-    ("system", "Context: {context}")
-])
+# ---- File uploader ----
+uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
 
-# LLM
-llm = ChatGroq(api_key=GROQ_API_KEY, model="llama3-70b-8192")
+if uploaded_file is not None:
+    with st.spinner("Reading & processing PDF..."):
+        # Load PDF
+        loader = PyPDFLoader(uploaded_file)
+        pages = loader.load()
 
-# RAG chain
-rag_chain = (
-    RunnableParallel({
-        "context": retriever,
-        "question": RunnablePassthrough(),
-        "chat_history": lambda x: x["chat_history"]
-    })
-    | prompt
-    | llm
-    | StrOutputParser()
-)
+        # Ensure page content is always a string
+        for p in pages:
+            if not isinstance(p.page_content, str):
+                p.page_content = str(p.page_content or "")
 
-# User input
-query = st.chat_input("Ask a question about the PDF")
-if query:
-    answer = rag_chain.invoke({
-        "question": query,
-        "chat_history": st.session_state.chat_history
-    })
-    st.session_state.chat_history.append(HumanMessage(content=query))
-    st.session_state.chat_history.append(AIMessage(content=answer))
+        # Split text into chunks
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        split_docs = splitter.split_documents(pages)
 
-    st.chat_message("You").write(query)
-    st.chat_message("Bot").write(answer)
+        # Ensure every chunk is a string
+        for doc in split_docs:
+            if not isinstance(doc.page_content, str):
+                doc.page_content = str(doc.page_content or "")
 
-# Display history
-for msg in st.session_state.chat_history:
-    role = "You" if isinstance(msg, HumanMessage) else "Bot"
-    st.chat_message(role).write(msg.content)
+        # Create embeddings
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+        # Create FAISS vectorstore
+        st.session_state.vectorstore = FAISS.from_documents(split_docs, embeddings)
+
+    st.success("✅ PDF processed successfully!")
+
+# ---- Chat input ----
+query = st.text_input("Ask a question about your PDF:")
+
+if query and st.session_state.vectorstore is not None:
+    with st.spinner("Generating answer..."):
+        retriever = st.session_state.vectorstore.as_retriever()
+
+        # Groq LLM
+        llm = ChatGroq(
+            model="llama3-8b-8192",  # or another Groq-supported model
+            temperature=0,
+            api_key=st.secrets["GROQ_API_KEY"]  # store in Streamlit secrets
+        )
+
+        rag_chain = ConversationalRetrievalChain.from_llm(
+            llm=llm,
+            retriever=retriever,
+            return_source_documents=True
+        )
+
+        # Ensure query is string
+        query = str(query).strip()
+
+        result = rag_chain.invoke({
+            "question": query,
+            "chat_history": st.session_state.chat_history
+        })
+
+        # Save chat history
+        st.session_state.chat_history.append((query, result["answer"]))
+
+        # Display answer
+        st.markdown("**Answer:**")
+        st.write(result["answer"])
+
+        # Show sources
+        if result.get("source_documents"):
+            with st.expander("📚 Sources"):
+                for doc in result["source_documents"]:
+                    st.write(doc.page_content[:500] + "...")
+
+elif query and st.session_state.vectorstore is None:
+    st.warning("⚠ Please upload and process a PDF first.")
