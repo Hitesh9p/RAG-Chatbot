@@ -9,8 +9,9 @@ from langchain_groq import ChatGroq
 from langchain.chains import ConversationalRetrievalChain
 
 # Load the API key securely
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
-if not GROQ_API_KEY:
+try:
+    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
+except KeyError:
     st.error("Please set GROQ_API_KEY in Streamlit Secrets.")
     st.stop()
 
