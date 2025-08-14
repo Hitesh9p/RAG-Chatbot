@@ -1,7 +1,7 @@
 import os
 import tempfile
 import streamlit as st
-from dotenv import load_dotenv
+
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -15,8 +15,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain.memory import ConversationBufferMemory
 
-load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
 st.set_page_config(page_title="📄 RAG Chatbot", layout="wide")
 st.title("📄 RAG Chatbot")
