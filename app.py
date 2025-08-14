@@ -1,94 +1,82 @@
-# app.py
-
 import streamlit as st
+import tempfile
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain_groq import ChatGroq
+import os
 
-# ---- Page config ----
-st.set_page_config(page_title="PDF RAG Chatbot", layout="wide")
-st.title("📄 PDF Chatbot with FAISS + HuggingFace + Groq")
+# Streamlit UI
+st.set_page_config(page_title="RAG Chatbot", page_icon="🤖")
+st.title("📄 RAG Chatbot with Groq API")
 
-# ---- Initialize session state ----
-if "vectorstore" not in st.session_state:
-    st.session_state.vectorstore = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+# API key input
+if "GROQ_API_KEY" not in st.session_state:
+    st.session_state.GROQ_API_KEY = st.text_input(
+        "Enter your Groq API key", type="password"
+    )
 
-# ---- File uploader ----
-uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
+if not st.session_state.GROQ_API_KEY:
+    st.warning("Please enter your Groq API key to continue.")
+    st.stop()
 
-if uploaded_file is not None:
-    with st.spinner("Reading & processing PDF..."):
+# File upload
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+
+if uploaded_file:
+    with st.spinner("Processing PDF..."):
+        # Save file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            tmp_file.write(uploaded_file.read())
+            tmp_path = tmp_file.name
+
         # Load PDF
-        loader = PyPDFLoader(uploaded_file)
-        pages = loader.load()
+        loader = PyPDFLoader(tmp_path)
+        documents = loader.load()
 
-        # Ensure page content is always a string
-        for p in pages:
-            if not isinstance(p.page_content, str):
-                p.page_content = str(p.page_content or "")
+        # Split text
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000, chunk_overlap=200
+        )
+        docs = text_splitter.split_documents(documents)
 
-        # Split text into chunks
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        split_docs = splitter.split_documents(pages)
+        # Embeddings
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-        # Ensure every chunk is a string
-        for doc in split_docs:
-            if not isinstance(doc.page_content, str):
-                doc.page_content = str(doc.page_content or "")
+        # Store in FAISS
+        vectorstore = FAISS.from_documents(docs, embeddings)
 
-        # Create embeddings
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-        # Create FAISS vectorstore
-        st.session_state.vectorstore = FAISS.from_documents(split_docs, embeddings)
-
-    st.success("✅ PDF processed successfully!")
-
-# ---- Chat input ----
-query = st.text_input("Ask a question about your PDF:")
-
-if query and st.session_state.vectorstore is not None:
-    with st.spinner("Generating answer..."):
-        retriever = st.session_state.vectorstore.as_retriever()
-
-        # Groq LLM
+        # RAG chain
         llm = ChatGroq(
-            model="llama3-8b-8192",  # or another Groq-supported model
-            temperature=0,
-            api_key=st.secrets["GROQ_API_KEY"]  # store in Streamlit secrets
+            groq_api_key=st.session_state.GROQ_API_KEY,
+            model_name="mixtral-8x7b-32768"
         )
 
+        retriever = vectorstore.as_retriever()
         rag_chain = ConversationalRetrievalChain.from_llm(
-            llm=llm,
-            retriever=retriever,
-            return_source_documents=True
+            llm, retriever=retriever
         )
 
-        # Ensure query is string
-        query = str(query).strip()
+        # Chat history
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
 
-        result = rag_chain.invoke({
-            "question": query,
-            "chat_history": st.session_state.chat_history
-        })
+        # User query
+        query = st.text_input("Ask something about your PDF:")
+        if query:
+            with st.spinner("Generating answer..."):
+                result = rag_chain.invoke({
+                    "question": query,
+                    "chat_history": st.session_state.chat_history
+                })
+                st.session_state.chat_history.append((query, result["answer"]))
+                st.markdown(f"**Answer:** {result['answer']}")
 
-        # Save chat history
-        st.session_state.chat_history.append((query, result["answer"]))
-
-        # Display answer
-        st.markdown("**Answer:**")
-        st.write(result["answer"])
-
-        # Show sources
-        if result.get("source_documents"):
-            with st.expander("📚 Sources"):
-                for doc in result["source_documents"]:
-                    st.write(doc.page_content[:500] + "...")
-
-elif query and st.session_state.vectorstore is None:
-    st.warning("⚠ Please upload and process a PDF first.")
+        # Show chat history
+        if st.session_state.chat_history:
+            st.subheader("Chat History")
+            for q, a in st.session_state.chat_history:
+                st.markdown(f"**Q:** {q}")
+                st.markdown(f"**A:** {a}")
