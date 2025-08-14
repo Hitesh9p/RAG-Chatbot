@@ -2,11 +2,11 @@ import os
 import tempfile
 import streamlit as st
 
-
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
+import chromadb
 
 from langchain_groq import ChatGroq
 from langchain_core.runnables import RunnableParallel, RunnablePassthrough
@@ -35,7 +35,14 @@ splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 split_docs = splitter.split_documents(docs)
 
 embeddings = OllamaEmbeddings(model="nomic-embed-text")
-vectorstore = Chroma.from_documents(split_docs, embedding=embeddings)
+
+vectorstore = Chroma.from_documents(
+    split_docs,
+    embedding=embeddings,
+    client_settings=chromadb.config.Settings(
+        persist_directory=None  
+    )
+)
 retriever = vectorstore.as_retriever()
 
 if "chat_history" not in st.session_state:
