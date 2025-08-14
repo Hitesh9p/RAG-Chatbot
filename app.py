@@ -3,9 +3,8 @@ from langchain_groq import ChatGroq
 from langchain_community.vectorstores import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
-from langchain.schema import HumanMessage, SystemMessage
 import tempfile
 import traceback
 import json
@@ -28,7 +27,7 @@ llm = ChatGroq(
 )
 
 # ---------------- STREAMLIT UI ----------------
-st.title("📚 RAG Chatbot with PDF + Groq API")
+st.title("📚 RAG Chatbot with PDF + Groq API (Free Embeddings)")
 uploaded_file = st.file_uploader("📄 Upload a PDF", type="pdf")
 
 # Store vector DB in session
@@ -48,8 +47,10 @@ if uploaded_file:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits = text_splitter.split_documents(documents)
 
-        # Create embeddings and store in Chroma
-        embeddings = OpenAIEmbeddings(openai_api_key=GROQ_API_KEY)  # You can swap with other embeddings
+        # ✅ FREE local embeddings
+        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        
+        # Store in Chroma
         vectorstore = Chroma.from_documents(splits, embedding=embeddings)
         st.session_state.vectorstore = vectorstore
 
@@ -71,7 +72,7 @@ if user_query and st.session_state.vectorstore:
             return_source_documents=True
         )
 
-        # Debug log: see query
+        # Debug log
         st.subheader("🛠 Debug Log")
         st.code(json.dumps({"query": user_query}, indent=2), language="json")
 
