@@ -4,6 +4,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_groq import ChatGroq
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.schema import HumanMessage, SystemMessage
 import os
 
 # ---------------------------
@@ -53,19 +54,13 @@ if uploaded_file:
 
         llm = ChatGroq(groq_api_key=groq_api_key, model="mixtral-8x7b-32768")
 
-        prompt = f"""
-        You are a helpful assistant. 
-        Use the following context to answer the user's question. 
-        If the answer is not in the context, say "I couldn't find that in the document."
+        # Proper message format for ChatGroq
+        messages = [
+            SystemMessage(content="You are a helpful assistant. Answer based only on the provided context."),
+            HumanMessage(content=f"Context:\n{context}\n\nQuestion:\n{user_question}")
+        ]
 
-        Context:
-        {context}
-
-        Question:
-        {user_question}
-        """
-
-        response = llm.invoke(prompt)
+        response = llm.invoke(messages)
 
         # Display answer
         st.subheader("📝 Answer:")
