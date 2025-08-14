@@ -1,91 +1,72 @@
-import os
 import streamlit as st
-from langchain.vectorstores import Chroma
-from langchain.chains import ConversationalRetrievalChain
-from langchain.prompts import PromptTemplate
-from langchain_groq import ChatGroq
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import PyPDFLoader
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_groq import ChatGroq
+from langchain_community.embeddings import HuggingFaceEmbeddings
+import os
 
-# -------------------- CONFIG --------------------
-st.set_page_config(page_title="RAG Chatbot with Groq", layout="wide")
+# ---------------------------
+# Load API key from secrets
+# ---------------------------
+groq_api_key = st.secrets["GROQ_API_KEY"]
 
-# Ensure Groq API key is set
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    st.error("🚨 Please set your Groq API key in the environment variable GROQ_API_KEY.")
-    st.stop()
+# ---------------------------
+# Streamlit UI
+# ---------------------------
+st.title("📄 RAG Chatbot with Groq")
+st.caption("Upload a PDF and ask questions. Powered by FAISS + Groq LLM.")
 
-# -------------------- UI --------------------
-st.title("📄 PDF RAG Chatbot (Groq + LangChain)")
-st.write("Upload a PDF, ask questions, and get AI-powered answers.")
+uploaded_file = st.file_uploader("📤 Upload a PDF", type=["pdf"])
+user_question = st.text_input("💬 Ask a question about the PDF:")
 
-uploaded_file = st.file_uploader("📂 Upload PDF", type=["pdf"])
-
-# -------------------- PROCESS PDF --------------------
+# ---------------------------
+# Process PDF and Build Vectorstore
+# ---------------------------
 if uploaded_file:
-    with open("uploaded.pdf", "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    # Save file temporarily
+    with open("temp.pdf", "wb") as f:
+        f.write(uploaded_file.read())
 
-    loader = PyPDFLoader("uploaded.pdf")
-    documents = loader.load()
+    loader = PyPDFLoader("temp.pdf")
+    docs = loader.load()
 
-    st.success(f"✅ Loaded {len(documents)} pages from PDF.")
+    # Split into chunks
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split_docs = splitter.split_documents(docs)
 
-    # Split text into chunks
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    docs = text_splitter.split_documents(documents)
+    # Create embeddings
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-    # Create embeddings & vector store
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vectordb = Chroma.from_documents(docs, embeddings)
+    # Build FAISS vector store
+    vectorstore = FAISS.from_documents(split_docs, embedding=embeddings)
 
-    retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+    # ---------------------------
+    # Chat with Groq
+    # ---------------------------
+    if user_question:
+        retriever = vectorstore.as_retriever()
+        retrieved_docs = retriever.get_relevant_documents(user_question)
 
-    # -------------------- CHATBOT --------------------
-    llm = ChatGroq(model="mixtral-8x7b-32768", api_key=GROQ_API_KEY)
+        # Create context from retrieved docs
+        context = "\n\n".join([d.page_content for d in retrieved_docs])
 
-    # Custom prompt
-    template = """
-    You are a helpful assistant answering questions based on the provided document.
-    Use only the context from the document.
-    If the answer is not in the document, say "I couldn't find that in the document."
+        llm = ChatGroq(groq_api_key=groq_api_key, model="mixtral-8x7b-32768")
 
-    Context: {context}
-    Question: {question}
-    Answer:
-    """
-    QA_PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
+        prompt = f"""
+        You are a helpful assistant. 
+        Use the following context to answer the user's question. 
+        If the answer is not in the context, say "I couldn't find that in the document."
 
-    qa = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        return_source_documents=True,
-    )
+        Context:
+        {context}
 
-    # Chat history
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+        Question:
+        {user_question}
+        """
 
-    # User input
-    user_query = st.text_input("💬 Ask a question from the PDF:")
+        response = llm.invoke(prompt)
 
-    if user_query:
-        try:
-            result = qa(
-                {"question": user_query, "chat_history": st.session_state.chat_history}
-            )
-
-            st.session_state.chat_history.append((user_query, result["answer"]))
-
-            # Display answer
-            st.markdown(f"**🤖 Answer:** {result['answer']}")
-
-            # Show sources
-            with st.expander("📄 Sources"):
-                for doc in result["source_documents"]:
-                    st.write(doc.page_content)
-
-        except Exception as e:
-            st.error(f"⚠️ Error: {str(e)}")
+        # Display answer
+        st.subheader("📝 Answer:")
+        st.write(response.content)
