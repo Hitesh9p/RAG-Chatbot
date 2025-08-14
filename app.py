@@ -4,7 +4,7 @@ import streamlit as st
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 from langchain_groq import ChatGroq
@@ -12,7 +12,6 @@ from langchain_core.runnables import RunnableParallel, RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain.memory import ConversationBufferMemory
 
 # Load API key from Streamlit secrets
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
@@ -36,10 +35,10 @@ docs = loader.load()
 splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 split_docs = splitter.split_documents(docs)
 
-# Create embeddings
-embeddings = OllamaEmbeddings(model="nomic-embed-text")
+# Use Hugging Face embeddings (no server needed)
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Use FAISS (works in Streamlit Cloud)
+# Use FAISS vector store (works on Streamlit Cloud)
 vectorstore = FAISS.from_documents(split_docs, embedding=embeddings)
 retriever = vectorstore.as_retriever()
 
