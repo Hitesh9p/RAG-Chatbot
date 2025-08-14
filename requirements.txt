@@ -6,3 +6,5 @@ langchain-text-splitters
 langchain-groq 
 python-dotenv 
 chromadb
+groq
+pypdf
