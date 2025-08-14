@@ -36,7 +36,7 @@ llm = ChatGroq(
 )
 
 # ---------------- STREAMLIT UI ----------------
-st.title("📚 RAG Chatbot with PDF + Groq API (Free Embeddings)")
+st.title("📚 RAG Chatbot with PDF + Groq API")
 uploaded_file = st.file_uploader("📄 Upload a PDF", type="pdf")
 
 # Store vector DB in session
