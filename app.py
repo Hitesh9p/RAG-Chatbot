@@ -1,3 +1,10 @@
+# ---------------- FIX FOR SQLITE3 ----------------
+# This must be at the very top of your script
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+# -------------------------------------------------
+
 import streamlit as st
 from langchain_groq import ChatGroq
 from langchain_community.vectorstores import Chroma
@@ -8,6 +15,7 @@ from langchain.chains import RetrievalQA
 import tempfile
 import traceback
 import json
+import os # It's good practice to use os.path.join
 
 # ---------------- CONFIG ----------------
 MODEL_NAME = "llama3-70b-8192"
@@ -15,8 +23,9 @@ MODEL_NAME = "llama3-70b-8192"
 # ---------------- API KEY HANDLING ----------------
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-except KeyError:
+except (KeyError, FileNotFoundError):
     st.error("❌ Missing `GROQ_API_KEY` in Streamlit secrets.")
+    st.info("Please add it to your secrets.toml file and restart the app.")
     st.stop()
 
 # ---------------- LLM INITIALIZATION ----------------
@@ -35,30 +44,34 @@ if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = None
 
 if uploaded_file:
-    try:
-        # Save to temp file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(uploaded_file.read())
-            tmp_path = tmp.name
+    with st.spinner("Processing PDF... this might take a moment ⏳"):
+        try:
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded_file.read())
+                tmp_path = tmp.name
 
-        # Load and split PDF
-        loader = PyPDFLoader(tmp_path)
-        documents = loader.load()
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        splits = text_splitter.split_documents(documents)
+            # Load and split PDF
+            loader = PyPDFLoader(tmp_path)
+            documents = loader.load()
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            splits = text_splitter.split_documents(documents)
 
-        # ✅ FREE local embeddings
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        
-        # Store in Chroma
-        vectorstore = Chroma.from_documents(splits, embedding=embeddings)
-        st.session_state.vectorstore = vectorstore
+            # ✅ FREE local embeddings
+            embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-        st.success("✅ PDF processed and ready for questions.")
+            # Store in Chroma using the corrected sqlite3
+            vectorstore = Chroma.from_documents(splits, embedding=embeddings)
+            st.session_state.vectorstore = vectorstore
 
-    except Exception as e:
-        st.error(f"Error processing PDF: {str(e)}")
-        st.text(traceback.format_exc())
+            # Clean up the temporary file
+            os.remove(tmp_path)
+
+            st.success("✅ PDF processed and ready for questions.")
+
+        except Exception as e:
+            st.error(f"Error processing PDF: {str(e)}")
+            st.text(traceback.format_exc())
 
 # Question input
 user_query = st.text_input("💬 Ask something from the document:")
@@ -72,11 +85,8 @@ if user_query and st.session_state.vectorstore:
             return_source_documents=True
         )
 
-        # Debug log
-        st.subheader("🛠 Debug Log")
-        st.code(json.dumps({"query": user_query}, indent=2), language="json")
-
-        result = qa_chain({"query": user_query})
+        with st.spinner("Finding answer..."):
+            result = qa_chain.invoke({"query": user_query}) # Use invoke for newer LangChain versions
 
         # Show answer
         st.subheader("✅ Answer")
@@ -85,7 +95,11 @@ if user_query and st.session_state.vectorstore:
         # Show sources
         st.subheader("📄 Sources")
         for doc in result["source_documents"]:
-            st.write(doc.metadata, doc.page_content[:200] + "...")
+            source = doc.metadata.get('source', 'N/A')
+            page = doc.metadata.get('page', 'N/A')
+            st.info(f"Source: {os.path.basename(source)}, Page: {page + 1}")
+            st.write(doc.page_content[:300] + "...")
+
 
     except Exception as e:
         st.error(f"Error during query: {str(e)}")
