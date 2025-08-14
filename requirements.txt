@@ -6,5 +6,8 @@ langchain-text-splitters
 huggingface-hub
 sentence-transformers
 pypdf
+# Fix for ChromaDB's sqlite3 dependency on Streamlit Cloud
 pysqlite3-binary
 chromadb==0.4.24
+# Fix for numpy 2.0 incompatibility with chromadb<0.5
+numpy==1.26.4
