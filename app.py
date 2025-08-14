@@ -1,83 +1,91 @@
 import os
-import tempfile
 import streamlit as st
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_groq import ChatGroq
+from langchain.vectorstores import Chroma
 from langchain.chains import ConversationalRetrievalChain
+from langchain.prompts import PromptTemplate
+from langchain_groq import ChatGroq
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.document_loaders import PyPDFLoader
+from langchain.embeddings import HuggingFaceEmbeddings
 
-# Load the API key securely
-try:
-    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
-except KeyError:
-    st.error("Please set GROQ_API_KEY in Streamlit Secrets.")
+# -------------------- CONFIG --------------------
+st.set_page_config(page_title="RAG Chatbot with Groq", layout="wide")
+
+# Ensure Groq API key is set
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    st.error("🚨 Please set your Groq API key in the environment variable GROQ_API_KEY.")
     st.stop()
 
-st.set_page_config(page_title="RAG PDF Chatbot", layout="wide")
-st.title("📄 RAG PDF Chatbot — FAISS + HuggingFace + Groq (Cloud Ready)")
+# -------------------- UI --------------------
+st.title("📄 PDF RAG Chatbot (Groq + LangChain)")
+st.write("Upload a PDF, ask questions, and get AI-powered answers.")
 
-# Upload PDF
-uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
-if not uploaded_file:
-    st.info("Please upload a PDF to start.")
-    st.stop()
+uploaded_file = st.file_uploader("📂 Upload PDF", type=["pdf"])
 
-# Save uploaded file to disk before processing
-with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-    tmp.write(uploaded_file.read())
-    tmp_pdf_path = tmp.name
+# -------------------- PROCESS PDF --------------------
+if uploaded_file:
+    with open("uploaded.pdf", "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-# Load, split, and sanitize PDF pages
-loader = PyPDFLoader(tmp_pdf_path)
-pages = loader.load()
-for p in pages:
-    p.page_content = p.page_content or ""
-splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-chunks = splitter.split_documents(pages)
-for d in chunks:
-    d.page_content = d.page_content or ""
+    loader = PyPDFLoader("uploaded.pdf")
+    documents = loader.load()
 
-# Initialize HF embeddings & FAISS vector store
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vectorstore = FAISS.from_documents(chunks, embedding=embeddings)
+    st.success(f"✅ Loaded {len(documents)} pages from PDF.")
 
-# Setup Groq LLM & retrieval chain
-llm = ChatGroq(api_key=GROQ_API_KEY, model="mixtral-8x7b-32768", temperature=0)
-retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-qa = ConversationalRetrievalChain.from_llm(
-    llm=llm,
-    retriever=retriever,
-    return_source_documents=True
-)
+    # Split text into chunks
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    docs = text_splitter.split_documents(documents)
 
-# Chat history
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+    # Create embeddings & vector store
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vectordb = Chroma.from_documents(docs, embeddings)
 
-# Ask and answer
-user_query = st.text_input("Ask me anything about your PDF:")
-if user_query:
-    result = qa({"question": user_query, "chat_history": st.session_state.chat_history})
-    
-    answer = result.get("answer", "No answer.")
-    sources = result.get("source_documents", [])
-    
-    st.markdown("**Answer:**")
-    st.write(answer)
-    
-    if sources:
-        st.markdown("**Sources:**")
-        for i, doc in enumerate(sources, start=1):
-            content = getattr(doc, "page_content", str(doc))
-            st.write(f"{i}. {content[:500]}{'...' if len(content) > 500 else ''}")
+    retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
-    st.session_state.chat_history.append((user_query, answer))
+    # -------------------- CHATBOT --------------------
+    llm = ChatGroq(model="mixtral-8x7b-32768", api_key=GROQ_API_KEY)
 
-if st.session_state.chat_history:
-    st.markdown("---")
-    st.subheader("Conversation:")
-    for q, a in st.session_state.chat_history:
-        st.markdown(f"**Q:** {q}")
-        st.markdown(f"**A:** {a}")
+    # Custom prompt
+    template = """
+    You are a helpful assistant answering questions based on the provided document.
+    Use only the context from the document.
+    If the answer is not in the document, say "I couldn't find that in the document."
+
+    Context: {context}
+    Question: {question}
+    Answer:
+    """
+    QA_PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
+
+    qa = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=retriever,
+        return_source_documents=True,
+    )
+
+    # Chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # User input
+    user_query = st.text_input("💬 Ask a question from the PDF:")
+
+    if user_query:
+        try:
+            result = qa(
+                {"question": user_query, "chat_history": st.session_state.chat_history}
+            )
+
+            st.session_state.chat_history.append((user_query, result["answer"]))
+
+            # Display answer
+            st.markdown(f"**🤖 Answer:** {result['answer']}")
+
+            # Show sources
+            with st.expander("📄 Sources"):
+                for doc in result["source_documents"]:
+                    st.write(doc.page_content)
+
+        except Exception as e:
+            st.error(f"⚠️ Error: {str(e)}")
