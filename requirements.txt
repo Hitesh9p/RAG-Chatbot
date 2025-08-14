@@ -9,3 +9,4 @@ groq
 pypdf
 faiss-cpu
 sentence-transformers
+chromadb
