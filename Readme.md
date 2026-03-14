@@ -46,7 +46,7 @@ To run this project locally, follow these steps.
 
 ```bash
 git clone https://github.com/Hitesh9p/RAG-Chatbot/
-cd your-repo-name
+cd RAG-Chatbot
 ```
 
 ### 2. Create a Virtual Environment
